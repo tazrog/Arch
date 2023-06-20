@@ -44,10 +44,10 @@ numlockx
 xautolock
 slock
 ufw
-ttf-nerd-fonts-symbols-2048-em-mono
 vim-supertab
 vim-nerdtree
 alacritty
 network-manager-applet
 dunst
 feh
+rsync
