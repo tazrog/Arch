@@ -54,3 +54,4 @@ rsync
 zenity
 kitty
 w3m
+plymouth
