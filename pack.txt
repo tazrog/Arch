@@ -55,3 +55,4 @@ zenity
 kitty
 w3m
 plymouth
+lvm2
