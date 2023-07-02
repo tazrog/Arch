@@ -51,3 +51,6 @@ network-manager-applet
 dunst
 feh
 rsync
+zenity
+kitty
+w3m
