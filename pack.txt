@@ -58,3 +58,4 @@ plymouth
 wireshark-cli
 cronie
 papirus-icon-theme
+neofetch
