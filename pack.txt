@@ -56,3 +56,5 @@ kitty
 w3m
 plymouth
 wireshark-cli
+cronie
+papirus-icon-theme
