@@ -8,7 +8,7 @@ python-iwlib
 bash-completion
 picom
 xf86-video-intel
-htop
+btop
 ranger
 cmus
 pulseaudio
@@ -34,14 +34,12 @@ rofi
 godot
 flatpak
 vlc
-xorg
 firefox
 ttf-roboto
 ttf-roboto-mono
 xarchiver
 unzip
 numlockx
-xautolock
 slock
 ufw
 vim-supertab
@@ -52,11 +50,10 @@ dunst
 feh
 rsync
 zenity
-kitty
 w3m
 plymouth
-wireshark-cli
 cronie
 papirus-icon-theme
-neofetch
 rclone
+clevis
+mame
