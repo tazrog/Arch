@@ -1,4 +1,3 @@
-qtile
 python-psutil
 python-pip
 python-setproctitle
@@ -7,7 +6,6 @@ python-pyxdg
 python-iwlib
 bash-completion
 picom
-xf86-video-intel
 btop
 ranger
 cmus
@@ -22,7 +20,7 @@ cmake
 stella
 lightdm
 lightdm-gtk-greeter
-pcmanfm-gtk3
+pcmanfm
 gvfs
 ntfs-3g
 gnome-keyring
@@ -57,3 +55,5 @@ papirus-icon-theme
 rclone
 clevis
 mame
+iw
+
