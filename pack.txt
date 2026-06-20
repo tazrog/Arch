@@ -53,7 +53,10 @@ plymouth
 cronie
 papirus-icon-theme
 rclone
-clevis
 mame
 iw
+make
+flex
+bison
+
 
