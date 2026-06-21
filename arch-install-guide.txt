@@ -204,15 +204,41 @@ Then regenerate:
       mkinitcpio -P
 
 --------------------------------------------------------------------------------
-14. ROOT PASSWORD + USER
+14. ROOT PASSWORD + SUDO USER
 --------------------------------------------------------------------------------
+Set the root password:
+
       passwd                       # set root password
 
-      useradd -m -G wheel roger    # change "roger" to your username
+Create your everyday user, add it to the "wheel" group (the conventional
+admin group), and give it a password. Change "roger" to your username:
+
+      useradd -m -G wheel -s /bin/bash roger
       passwd roger
 
-      # Grant sudo to the wheel group: uncomment "%wheel ALL=(ALL:ALL) ALL"
-      EDITOR=vim visudo
+Grant sudo to the wheel group. (The "sudo" package was already installed by
+pacstrap in section 9.) Use a drop-in file in /etc/sudoers.d -- this is the
+clean, upgrade-safe way and avoids hand-editing the main sudoers file:
+
+      echo "%wheel ALL=(ALL:ALL) ALL" > /etc/sudoers.d/10-wheel
+      chmod 0440 /etc/sudoers.d/10-wheel
+
+Validate that the sudoers config parses (must print no syntax errors):
+
+      visudo -cf /etc/sudoers.d/10-wheel
+
+Alternative: instead of the drop-in, run `EDITOR=vim visudo` and uncomment the
+line "%wheel ALL=(ALL:ALL) ALL" in the main file. Either approach works; do
+ONE of them, not both.
+
+(Optional) Passwordless sudo for the wheel group -- convenient on a personal
+machine, but weaker security. Use NOPASSWD only if you understand that:
+
+      # echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/10-wheel
+
+After first boot you can confirm it works:
+
+      su - roger -c 'sudo whoami'    # should print: root
 
 --------------------------------------------------------------------------------
 15. BOOTLOADER (systemd-boot) WITH LUKS UNLOCK
