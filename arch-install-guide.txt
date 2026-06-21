@@ -1,0 +1,462 @@
+================================================================================
+ ARCH LINUX INSTALL GUIDE
+ System76 Meerkat (meer10) | LUKS full-disk encryption | ext4 | Qtile + Alacritty
+================================================================================
+
+Target machine : System76 Meerkat 10 (Intel NUC-class, UEFI firmware)
+Disk layout    : EFI System Partition (FAT32) + single LUKS-encrypted root (ext4)
+                 NO separate /home partition (home lives inside root)
+Encryption     : LUKS2 over the whole root partition
+Drive prep     : Securely wipe the target drive before partitioning
+WM / terminal  : Qtile window manager, Alacritty terminal
+
+WARNING: This procedure ERASES the target drive completely. Double-check the
+device name (e.g. /dev/nvme0n1) before running any destructive command. There
+is no undo.
+
+--------------------------------------------------------------------------------
+0. BEFORE YOU START
+--------------------------------------------------------------------------------
+- Download the latest Arch ISO from https://archlinux.org/download/ and verify
+  its signature.
+- Write it to a USB stick:
+      # On another Linux box:
+      dd if=archlinux-x86_64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+- System76 Meerkat firmware setup: tap F7 (or F2 for setup) at the System76
+  splash to reach the boot menu. Confirm:
+      * UEFI boot enabled (not Legacy/CSM)
+      * Secure Boot DISABLED (Arch's default kernel is not signed)
+- Boot the USB stick. You land in the live environment as root.
+
+--------------------------------------------------------------------------------
+1. NETWORK
+--------------------------------------------------------------------------------
+Wired ethernet on the Meerkat is usually up automatically. Verify:
+
+      ping -c3 archlinux.org
+
+For Wi-Fi, use iwctl:
+
+      iwctl
+      [iwd]# device list
+      [iwd]# station wlan0 scan
+      [iwd]# station wlan0 get-networks
+      [iwd]# station wlan0 connect "YOUR_SSID"
+      [iwd]# exit
+
+--------------------------------------------------------------------------------
+2. CLOCK
+--------------------------------------------------------------------------------
+      timedatectl set-ntp true
+
+--------------------------------------------------------------------------------
+3. IDENTIFY THE TARGET DISK
+--------------------------------------------------------------------------------
+      lsblk -o NAME,SIZE,MODEL,TYPE
+
+The Meerkat 10's internal drive is typically an NVMe SSD: /dev/nvme0n1
+(A SATA drive would be /dev/sda.)
+
+>>> For the rest of this guide, set a variable so you don't fat-finger it. <<<
+    Replace nvme0n1 with YOUR disk if different.
+
+      DISK=/dev/nvme0n1
+
+Note on partition naming:
+  - NVMe drives:  ${DISK}p1, ${DISK}p2   (e.g. /dev/nvme0n1p1)
+  - SATA drives:  ${DISK}1, ${DISK}2     (e.g. /dev/sda1)
+This guide uses ${DISK}p1 / ${DISK}p2 (NVMe). Adjust if you're on SATA.
+
+--------------------------------------------------------------------------------
+4. SECURELY WIPE THE DRIVE
+--------------------------------------------------------------------------------
+First clear any old signatures / partition tables:
+
+      wipefs -a $DISK
+
+(Recommended) Overwrite the entire drive with random data so that, once
+encrypted, used vs. free space is indistinguishable. The clean way is to map
+the whole disk as a temporary crypto device and zero it (fast, full speed):
+
+      cryptsetup open --type plain -d /dev/urandom $DISK to_be_wiped
+      dd if=/dev/zero of=/dev/mapper/to_be_wiped bs=1M status=progress
+      # dd ends with "No space left on device" -- that is expected/correct.
+      cryptsetup close to_be_wiped
+
+Alternative (simpler, slower, fine for an SSD too):
+
+      dd if=/dev/urandom of=$DISK bs=1M status=progress
+
+For an NVMe SSD you may instead issue a secure erase via the controller
+(fastest, but optional -- the LUKS wipe above is sufficient):
+
+      # Optional, NVMe only. The drive must NOT be frozen.
+      nvme format $DISK --ses=1 --force
+
+--------------------------------------------------------------------------------
+5. PARTITION THE DISK (GPT, UEFI)
+--------------------------------------------------------------------------------
+Two partitions: a 1 GiB EFI System Partition and the rest as the LUKS container.
+
+      sgdisk --zap-all $DISK
+      sgdisk -n1:0:+1GiB -t1:ef00 -c1:"EFI"  $DISK
+      sgdisk -n2:0:0     -t2:8309 -c2:"LUKS" $DISK
+
+Verify:
+
+      sgdisk -p $DISK
+      lsblk $DISK
+
+Result:
+      ${DISK}p1  -> EFI System Partition (1 GiB)
+      ${DISK}p2  -> LUKS container (remaining space)
+
+--------------------------------------------------------------------------------
+6. CREATE THE LUKS ENCRYPTED CONTAINER
+--------------------------------------------------------------------------------
+Format partition 2 as LUKS2. You'll be prompted to type YES and set a
+passphrase. CHOOSE A STRONG PASSPHRASE -- this protects the whole system.
+
+      cryptsetup luksFormat --type luks2 ${DISK}p2
+
+Open (unlock) it. It will appear as /dev/mapper/cryptroot:
+
+      cryptsetup open ${DISK}p2 cryptroot
+
+--------------------------------------------------------------------------------
+7. FORMAT FILESYSTEMS (ext4 root, FAT32 EFI)
+--------------------------------------------------------------------------------
+      mkfs.fat -F32 -n EFI ${DISK}p1
+      mkfs.ext4 -L arch_root /dev/mapper/cryptroot
+
+--------------------------------------------------------------------------------
+8. MOUNT
+--------------------------------------------------------------------------------
+      mount /dev/mapper/cryptroot /mnt
+      mount --mkdir ${DISK}p1 /mnt/boot
+
+(No separate /home mount -- /home is just a directory on the root filesystem.)
+
+--------------------------------------------------------------------------------
+9. INSTALL THE BASE SYSTEM
+--------------------------------------------------------------------------------
+The Meerkat 10 has an Intel CPU, so install intel-ucode for microcode updates.
+
+      pacstrap -K /mnt \
+          base linux linux-firmware intel-ucode \
+          base-devel \
+          cryptsetup lvm2 \
+          vim nano \
+          networkmanager \
+          sudo \
+          git
+
+--------------------------------------------------------------------------------
+10. FSTAB
+--------------------------------------------------------------------------------
+      genfstab -U /mnt >> /mnt/etc/fstab
+      # Sanity check it:
+      cat /mnt/etc/fstab
+
+--------------------------------------------------------------------------------
+11. ENTER THE NEW SYSTEM
+--------------------------------------------------------------------------------
+      arch-chroot /mnt
+
+--------------------------------------------------------------------------------
+12. TIME ZONE, LOCALE, HOSTNAME
+--------------------------------------------------------------------------------
+      ln -sf /usr/share/zoneinfo/Region/City /etc/localtime
+      # example: ln -sf /usr/share/zoneinfo/America/New_York /etc/localtime
+      hwclock --systohc
+
+      # Uncomment your locale (e.g. en_US.UTF-8 UTF-8) in /etc/locale.gen:
+      vim /etc/locale.gen
+      locale-gen
+      echo "LANG=en_US.UTF-8" > /etc/locale.conf
+
+      echo "meerkat" > /etc/hostname
+      cat > /etc/hosts <<'EOF'
+127.0.0.1   localhost
+::1         localhost
+127.0.1.1   meerkat.localdomain meerkat
+EOF
+
+--------------------------------------------------------------------------------
+13. INITRAMFS -- SYSTEMD-BASED ENCRYPT HOOK (required for TPM auto-unlock)
+--------------------------------------------------------------------------------
+We use the systemd-based hooks (sd-encrypt) instead of the older busybox
+"encrypt" hook, because ONLY the systemd hook can unlock LUKS from the TPM at
+boot (see section 21). Edit /etc/mkinitcpio.conf and set the HOOKS line so
+that "sd-encrypt" comes before "filesystems":
+
+      HOOKS=(base systemd autodetect microcode modconf kms keyboard sd-vconsole block sd-encrypt filesystems fsck)
+
+Key differences from the busybox hooks:
+  - "systemd" replaces "udev"
+  - "sd-vconsole" replaces "keymap consolefont"
+  - "sd-encrypt" replaces "encrypt"
+  - the kernel cmdline uses rd.luks.* options instead of cryptdevice= (see
+    section 15)
+
+Then regenerate:
+
+      mkinitcpio -P
+
+--------------------------------------------------------------------------------
+14. ROOT PASSWORD + USER
+--------------------------------------------------------------------------------
+      passwd                       # set root password
+
+      useradd -m -G wheel roger    # change "roger" to your username
+      passwd roger
+
+      # Grant sudo to the wheel group: uncomment "%wheel ALL=(ALL:ALL) ALL"
+      EDITOR=vim visudo
+
+--------------------------------------------------------------------------------
+15. BOOTLOADER (systemd-boot) WITH LUKS UNLOCK
+--------------------------------------------------------------------------------
+We use systemd-boot (simple, UEFI-native). Install it:
+
+      bootctl install
+
+Get the UUID of the LUKS *partition* (the ${DISK}p2 device, NOT the mapper):
+
+      blkid -s UUID -o value ${DISK}p2
+
+Copy that UUID. Create the loader entry:
+
+      vim /boot/loader/entries/arch.conf
+
+Contents (replace LUKS_PARTITION_UUID with the value above):
+
+      title   Arch Linux
+      linux   /vmlinuz-linux
+      initrd  /intel-ucode.img
+      initrd  /initramfs-linux.img
+      options rd.luks.name=LUKS_PARTITION_UUID=cryptroot root=/dev/mapper/cryptroot rw
+
+(Note the syntax for the systemd hook: rd.luks.name=<UUID>=cryptroot -- this
+replaces the cryptdevice=UUID=...:cryptroot form used by the busybox hook.)
+
+Set the loader default:
+
+      vim /boot/loader/loader.conf
+
+Contents:
+
+      default arch.conf
+      timeout 3
+      console-mode max
+      editor   no
+
+(systemd-boot updates automatically via a pacman hook from the systemd
+package, so no extra config is needed for kernel updates.)
+
+--------------------------------------------------------------------------------
+16. ENABLE NETWORKING
+--------------------------------------------------------------------------------
+      systemctl enable NetworkManager
+
+--------------------------------------------------------------------------------
+17. GRAPHICS + Xorg (Intel)
+--------------------------------------------------------------------------------
+The Meerkat 10 uses Intel integrated graphics. Install Xorg and the driver:
+
+      pacman -S xorg-server xorg-xinit \
+                mesa vulkan-intel intel-media-driver \
+                xf86-video-intel
+
+(xf86-video-intel is optional; the modesetting driver in xorg-server works
+well on modern Intel GPUs. Install it only if you have a specific reason.)
+
+--------------------------------------------------------------------------------
+18. QTILE + ALACRITTY + ESSENTIALS
+--------------------------------------------------------------------------------
+      pacman -S qtile alacritty \
+                python-psutil \
+                ttf-dejavu ttf-firacode-nerd \
+                pipewire pipewire-pulse wireplumber \
+                network-manager-applet \
+                pavucontrol \
+                firefox \
+                rofi feh picom
+
+Notes:
+  - qtile      : the window manager (Python-based, config in ~/.config/qtile)
+  - alacritty  : GPU-accelerated terminal
+  - rofi       : application launcher (handy with Qtile)
+  - feh        : set wallpaper
+  - picom      : compositor (transparency/shadows; optional)
+
+--------------------------------------------------------------------------------
+19. START QTILE ON LOGIN (via startx)
+--------------------------------------------------------------------------------
+As your normal user (exit root or open a user shell after first boot), create
+~/.xinitrc:
+
+      echo "exec qtile start" > ~/.xinitrc
+
+Generate a default Qtile config you can edit later:
+
+      mkdir -p ~/.config/qtile
+      cp /usr/share/doc/qtile/default_config.py ~/.config/qtile/config.py
+
+Set Alacritty as Qtile's terminal: in ~/.config/qtile/config.py the default
+already auto-detects a terminal via guess_terminal(), but to force it edit
+the terminal line to:
+
+      terminal = "alacritty"
+
+To launch the desktop after logging in at the TTY:
+
+      startx
+
+(Optional) Auto-startx on TTY1 login -- append to ~/.bash_profile:
+
+      if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
+          exec startx
+      fi
+
+(Optional) If you'd rather have a graphical login manager:
+
+      pacman -S lightdm lightdm-gtk-greeter
+      systemctl enable lightdm
+      # Qtile ships a qtile.desktop session entry that lightdm will list.
+
+--------------------------------------------------------------------------------
+20. FINISH
+--------------------------------------------------------------------------------
+      exit            # leave the chroot
+      umount -R /mnt
+      cryptsetup close cryptroot
+      reboot          # remove the USB stick
+
+On boot you'll be prompted for the LUKS passphrase, then you'll reach a login
+prompt. Log in as your user and run `startx` (or it auto-starts if you set up
+.bash_profile) to enter Qtile. Open a terminal with Mod+Return (Alacritty).
+
+For now you still type the passphrase every boot. Do section 21 to make the
+TPM unlock the disk automatically.
+
+--------------------------------------------------------------------------------
+21. TPM 2.0 AUTO-UNLOCK (no passphrase at boot)
+--------------------------------------------------------------------------------
+Goal: the TPM chip in the Meerkat 10 releases the LUKS key automatically at
+boot, so you don't type a passphrase. Your passphrase still works as a
+fallback and is NOT removed.
+
+Do this AFTER the first successful boot into the installed system (the TPM
+must be accessible from the running OS). Run these commands as root (sudo -i).
+
+--- 21a. Confirm the TPM is present and version 2.0 -------------------------
+      systemd-analyze has-tpm2
+
+This should report yes for firmware/driver/system. If not, enable the TPM
+(often labelled "PTT" / "Intel Platform Trust Technology", or "Security
+Device") in the Meerkat firmware setup (F2 at boot) and try again. You can
+also check:
+
+      ls /dev/tpmrm0          # device node should exist
+      systemd-cryptenroll --tpm2-device=list
+
+--- 21b. (Recommended) Make sure the kernel can see the TPM in early boot ---
+The systemd initramfs already pulls in TPM2 support, but verify the tss2
+userspace libs are present (they ship as dependencies of systemd; install
+explicitly if missing):
+
+      pacman -S --needed tpm2-tss
+
+--- 21c. Enroll the TPM into the LUKS partition -----------------------------
+Replace ${DISK}p2 with your actual LUKS partition (e.g. /dev/nvme0n1p2).
+
+Simple version (binds to firmware+bootloader integrity, PCRs 0+7):
+
+      systemd-cryptenroll --tpm2-device=auto \
+          --tpm2-pcrs=0+7 \
+          ${DISK}p2
+
+You'll be asked for an EXISTING LUKS passphrase once to authorize the new
+TPM keyslot.
+
+What the PCRs mean (each PCR "seals" the key to some boot state -- if that
+state changes, the TPM refuses to release the key and you fall back to the
+passphrase):
+      PCR 0  -> core firmware / UEFI executable code
+      PCR 7  -> Secure Boot state and keys
+PCR 7 is only meaningful if Secure Boot is enabled. Since this guide disables
+Secure Boot, you may prefer to bind to PCR 0 alone, or add PCR 7 later if you
+turn Secure Boot on. A common robust choice is just:
+
+      systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=7 ${DISK}p2
+
+(Optional, stronger but more fragile) Add a PIN so the TPM also requires a
+short PIN you choose -- protects against someone who steals the whole machine:
+
+      systemd-cryptenroll --tpm2-device=auto --tpm2-pcrs=0+7 \
+          --tpm2-with-pin=yes ${DISK}p2
+
+--- 21d. Tell the initramfs to try the TPM ----------------------------------
+With the sd-encrypt hook, add tpm2-device=auto to the LUKS options on the
+kernel cmdline. Edit /boot/loader/entries/arch.conf and append it to the
+rd.luks.options (create the option if absent):
+
+      options rd.luks.name=LUKS_PARTITION_UUID=cryptroot rd.luks.options=tpm2-device=auto root=/dev/mapper/cryptroot rw
+
+(If you used a PIN in 21c, the boot will prompt for the PIN instead of the
+full passphrase.)
+
+Regenerate the initramfs so the change is picked up (the cmdline change alone
+doesn't need it, but rerun to be safe):
+
+      mkinitcpio -P
+
+--- 21e. Reboot and test ----------------------------------------------------
+      reboot
+
+It should now unlock without asking for the passphrase (or ask only for the
+short PIN). If it still prompts, you'll be asked for the passphrase as before
+-- nothing is broken; check `journalctl -b | grep -i tpm` for why the TPM
+declined (usually a PCR mismatch).
+
+--- 21f. Managing keyslots --------------------------------------------------
+      # List all keyslots / what's enrolled:
+      systemd-cryptenroll ${DISK}p2
+
+      # Remove the TPM enrollment (e.g. to re-enroll after a firmware update
+      # changed the PCRs and broke auto-unlock):
+      systemd-cryptenroll --wipe-slot=tpm2 ${DISK}p2
+      # ...then redo 21c.
+
+IMPORTANT CAVEATS
+  - A BIOS/firmware update on the Meerkat changes PCR 0 and will break
+    auto-unlock. That's expected -- just type your passphrase, then re-enroll
+    (wipe-slot tpm2, then re-run 21c).
+  - NEVER remove your passphrase keyslot. The TPM is a convenience layer; the
+    passphrase is your recovery path.
+  - Binding to the TPM without a PIN means anyone who powers on THIS machine
+    gets a decrypted disk up to the login screen. Use --tpm2-with-pin=yes if
+    the device may be physically stolen and you want real at-rest protection.
+
+--------------------------------------------------------------------------------
+POST-INSTALL TIPS
+--------------------------------------------------------------------------------
+- Default Qtile modkey is Mod4 (the Super/Windows key).
+- Mod+Return  -> open terminal (Alacritty)
+- Mod+w       -> close window
+- Mod+Tab     -> cycle layouts
+- Edit ~/.config/qtile/config.py to customize keybinds, then restart Qtile
+  with Mod+Ctrl+r.
+- System76 firmware/driver extras (optional): the official packages
+  (system76-driver, system76-power) target Pop!_OS but the firmware tools are
+  in the AUR. They are NOT required for the Meerkat to work on Arch.
+- Keep the system updated:  sudo pacman -Syu
+- Back up your LUKS header (lets you recover if the header is damaged):
+      cryptsetup luksHeaderBackup ${DISK}p2 \
+          --header-backup-file /path/to/safe/luks-header.img
+  Store it somewhere OTHER than this disk.
+
+================================================================================
+ End of guide.
+================================================================================
