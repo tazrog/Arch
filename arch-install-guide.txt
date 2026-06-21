@@ -317,14 +317,42 @@ Notes:
   - picom      : compositor (transparency/shadows; optional)
 
 --------------------------------------------------------------------------------
-19. START QTILE ON LOGIN (via startx)
+19. START QTILE ON LOGIN (via LightDM)
 --------------------------------------------------------------------------------
-As your normal user (exit root or open a user shell after first boot), create
-~/.xinitrc:
+We use LightDM, a lightweight graphical login manager. At boot you'll get a
+graphical login screen; pick the Qtile session and log in straight into Qtile
+-- no startx, no TTY juggling.
 
-      echo "exec qtile start" > ~/.xinitrc
+--- 19a. Install LightDM + a greeter ----------------------------------------
+Run this in the chroot (it's the GTK greeter, the standard lightweight one):
 
-Generate a default Qtile config you can edit later:
+      pacman -S lightdm lightdm-gtk-greeter
+
+Enable the service so it starts at boot:
+
+      systemctl enable lightdm
+
+How LightDM finds Qtile: the qtile package ships an Xsession entry at
+/usr/share/xsessions/qtile.desktop, so "Qtile" automatically appears in the
+greeter's session dropdown. You don't need a .xinitrc with LightDM.
+
+--- 19b. Verify the Qtile session file exists -------------------------------
+      ls /usr/share/xsessions/qtile.desktop
+
+If for some reason it's missing, create it:
+
+      cat > /usr/share/xsessions/qtile.desktop <<'EOF'
+[Desktop Entry]
+Name=Qtile
+Comment=Qtile session
+Exec=qtile start
+Type=Application
+Keywords=wm;tiling
+EOF
+
+--- 19c. Qtile config + Alacritty terminal ----------------------------------
+Generate a default Qtile config you can edit later (do this as your normal
+user after first boot, OR pre-seed it in the user's home now):
 
       mkdir -p ~/.config/qtile
       cp /usr/share/doc/qtile/default_config.py ~/.config/qtile/config.py
@@ -335,21 +363,19 @@ the terminal line to:
 
       terminal = "alacritty"
 
-To launch the desktop after logging in at the TTY:
+--- 19d. (Optional) Autologin straight into Qtile ---------------------------
+Skip the LightDM password prompt entirely (convenient, but anyone who powers
+on the machine reaches your desktop -- only sensible if you also did the TPM
+PIN in section 21). Edit /etc/lightdm/lightdm.conf, find the [Seat:*] section,
+and set:
 
-      startx
+      [Seat:*]
+      autologin-user=roger
+      autologin-session=qtile
 
-(Optional) Auto-startx on TTY1 login -- append to ~/.bash_profile:
+Autologin also requires the user to be in the "autologin" group:
 
-      if [ -z "$DISPLAY" ] && [ "$(tty)" = "/dev/tty1" ]; then
-          exec startx
-      fi
-
-(Optional) If you'd rather have a graphical login manager:
-
-      pacman -S lightdm lightdm-gtk-greeter
-      systemctl enable lightdm
-      # Qtile ships a qtile.desktop session entry that lightdm will list.
+      groupadd -r autologin 2>/dev/null; gpasswd -a roger autologin
 
 --------------------------------------------------------------------------------
 20. FINISH
@@ -359,9 +385,10 @@ To launch the desktop after logging in at the TTY:
       cryptsetup close cryptroot
       reboot          # remove the USB stick
 
-On boot you'll be prompted for the LUKS passphrase, then you'll reach a login
-prompt. Log in as your user and run `startx` (or it auto-starts if you set up
-.bash_profile) to enter Qtile. Open a terminal with Mod+Return (Alacritty).
+On boot you'll be prompted for the LUKS passphrase, then the LightDM graphical
+login screen appears. Make sure "Qtile" is selected in the session dropdown
+(usually a gear/menu icon), enter your username and password, and you'll land
+directly in Qtile. Open a terminal with Mod+Return (Alacritty).
 
 For now you still type the passphrase every boot. Do section 21 to make the
 TPM unlock the disk automatically.
